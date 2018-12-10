@@ -9,7 +9,7 @@ module Deliver
 
     def run(options, screenshots)
       begin
-        fastlane_path = FastlaneCore::FastlaneFolder.path
+        fastlane_path = FastlaneCore::FastlaneFolder.path || "."
         html_path = self.render(options, screenshots, fastlane_path)
       rescue => ex
         UI.error(ex.inspect)
