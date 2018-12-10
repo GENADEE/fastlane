@@ -31,9 +31,6 @@ module Deliver
         end
       end
 
-      # Now, fill in the new ones
-      indized = {} # per language and device type
-
       enabled_languages = screenshots_per_language.keys
       if enabled_languages.count > 0
         v.create_languages(enabled_languages)
@@ -48,32 +45,51 @@ module Deliver
 
       screenshots_per_language.each do |language, screenshots_for_language|
         UI.message("Uploading #{screenshots_for_language.length} screenshots for language #{language}")
-        screenshots_for_language.each do |screenshot|
-          indized[screenshot.language] ||= {}
-          indized[screenshot.language][screenshot.formatted_name] ||= 0
-          indized[screenshot.language][screenshot.formatted_name] += 1 # we actually start with 1... wtf iTC
 
-          index = indized[screenshot.language][screenshot.formatted_name]
+        screenshots_by_device = screenshots_for_language.group_by(&:device_type)
 
-          if index > 10
-            UI.error("Too many screenshots found for device '#{screenshot.formatted_name}' in '#{screenshot.language}', skipping this one (#{screenshot.path})")
-            next
+        potential_server_error_tries = 3
+
+        screenshots_by_device.each do |device_type, screenshots|
+          begin
+            device_shot_count = 0
+
+            screenshots.each do |screenshot|
+              device_shot_count += 1 # we actually start with 1... wtf iTC
+
+              index = device_shot_count
+
+              if index > 10
+                UI.error("Too many screenshots found for device '#{device_type}' in '#{language}', skipping this one (#{screenshot.path})")
+                next
+              end
+
+              UI.message("Uploading '#{screenshot.path}' device '#{screenshot.device_type}'...")
+              v.upload_screenshot!(screenshot.path,
+                                   index,
+                                   screenshot.language,
+                                   screenshot.device_type,
+                                   screenshot.is_messages?)
+            end
+
+            # ideally we should only save once, but itunes server can't cope it seems
+            # so we save per language. See issue #349
+            Helper.show_loading_indicator("Saving changes for #{device_type}")
+            v.save!
+            Helper.hide_loading_indicator
+
+          rescue Spaceship::TunesClient::ITunesConnectPotentialServerError => ex
+            unless (potential_server_error_tries -= 1).zero?
+              Helper.hide_loading_indicator
+              UI.error("Retrying uploads for '#{device_type}' in '#{language}'")
+              retry
+            end
+            raise ex
           end
 
-          UI.message("Uploading '#{screenshot.path}'...")
-          v.upload_screenshot!(screenshot.path,
-                               index,
-                               screenshot.language,
-                               screenshot.device_type,
-                               screenshot.is_messages?)
+          # Refresh app version to start clean again. See issue #9859
+          v = app.edit_version
         end
-        # ideally we should only save once, but itunes server can't cope it seems
-        # so we save per language. See issue #349
-        Helper.show_loading_indicator("Saving changes")
-        v.save!
-        # Refresh app version to start clean again. See issue #9859
-        v = app.edit_version
-        Helper.hide_loading_indicator
       end
       UI.success("Successfully uploaded screenshots to App Store Connect")
     end
